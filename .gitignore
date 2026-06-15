@@ -1,0 +1,2 @@
+# Repo-wide ignores. Per-tool ignores live in each tool's own .gitignore.
+.DS_Store

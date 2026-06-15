@@ -1,0 +1,8 @@
+.build/
+build/
+*.xcodeproj
+.DS_Store
+.swiftpm/
+
+# Personal study notes — keep private. Remove this line to publish it.
+LEARNINGS.md
