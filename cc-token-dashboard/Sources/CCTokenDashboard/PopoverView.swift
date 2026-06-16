@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import Charts
 import CCTokenCore
 
@@ -17,7 +18,11 @@ struct PopoverView: View {
                 Divider()
                 trend
                 Divider()
-                projectList
+                breakdown("By project", store.aggregated.byProject, limit: 5)
+                if store.aggregated.bySource.count > 1 {
+                    Divider()
+                    breakdown("By source", store.aggregated.bySource, limit: 6)
+                }
             }
             footer
         }
@@ -106,19 +111,20 @@ struct PopoverView: View {
         }
     }
 
-    private var projectList: some View {
+    /// Shared breakdown list — used for both "By project" and "By source".
+    private func breakdown(_ title: String, _ items: [NamedTotal], limit: Int) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("By project").font(.caption).foregroundStyle(.secondary)
-            if store.aggregated.byProject.isEmpty {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            if items.isEmpty {
                 Text("No usage in this range").font(.caption).foregroundStyle(.tertiary)
             }
-            ForEach(store.aggregated.byProject.prefix(5)) { p in
+            ForEach(items.prefix(limit)) { item in
                 let pct = store.aggregated.totalTokens > 0
-                    ? Double(p.tokens) / Double(store.aggregated.totalTokens) : 0
+                    ? Double(item.tokens) / Double(store.aggregated.totalTokens) : 0
                 HStack(spacing: 8) {
-                    Text(p.name).lineLimit(1)
+                    Text(item.name).lineLimit(1)
                     Spacer(minLength: 8)
-                    Text(Format.tokens(p.tokens)).monospacedDigit().foregroundStyle(.secondary)
+                    Text(Format.tokens(item.tokens)).monospacedDigit().foregroundStyle(.secondary)
                     Text("\(Int(pct * 100))%").monospacedDigit()
                         .foregroundStyle(.tertiary).frame(width: 34, alignment: .trailing)
                 }
@@ -166,6 +172,20 @@ struct SettingsPanel: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Settings").font(.headline)
 
+            // Data sources — Claude Code plus any custom Claude-format folders.
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Data sources").font(.caption).foregroundStyle(.secondary)
+                ForEach(store.dataSources) { ds in
+                    sourceRow(ds)
+                }
+                Button { addCustomFolder() } label: {
+                    Label("Add folder…", systemImage: "plus")
+                }
+                .buttonStyle(.link).font(.caption)
+            }
+
+            Divider()
+
             VStack(alignment: .leading, spacing: 4) {
                 Text("Menu bar shows").font(.caption).foregroundStyle(.secondary)
                 Picker("", selection: $store.metricRaw) {
@@ -193,5 +213,64 @@ struct SettingsPanel: View {
             }
         }
         .onAppear { thresholdM = Double(store.notifyThreshold) / 1_000_000 }
+    }
+
+    // MARK: - Data source rows
+
+    @ViewBuilder
+    private func sourceRow(_ ds: DataSource) -> some View {
+        HStack(spacing: 8) {
+            Toggle("", isOn: Binding(
+                get: { ds.enabled },
+                set: { var c = ds; c.enabled = $0; store.updateSource(c) }
+            ))
+            .labelsHidden().toggleStyle(.switch).controlSize(.mini)
+
+            VStack(alignment: .leading, spacing: 0) {
+                Text(ds.name).font(.caption).lineLimit(1)
+                Text(ds.path.isEmpty ? "default · ~/.claude/projects" : ds.path)
+                    .font(.caption2).foregroundStyle(.tertiary)
+                    .lineLimit(1).truncationMode(.middle)
+            }
+
+            Spacer(minLength: 4)
+
+            Button { chooseFolder(for: ds) } label: { Image(systemName: "folder") }
+                .buttonStyle(.plain).foregroundStyle(.secondary).help("Choose folder")
+
+            if ds.id != "claude-code-default" {
+                Button { store.removeSource(id: ds.id) } label: { Image(systemName: "minus.circle") }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).help("Remove source")
+            } else if !ds.path.isEmpty {
+                Button { var c = ds; c.path = ""; store.updateSource(c) } label: {
+                    Image(systemName: "arrow.uturn.backward")
+                }
+                .buttonStyle(.plain).foregroundStyle(.secondary).help("Reset to default location")
+            }
+        }
+    }
+
+    private func chooseFolder(for ds: DataSource) {
+        guard let url = pickDirectory() else { return }
+        var c = ds; c.path = url.path; store.updateSource(c)
+    }
+
+    private func addCustomFolder() {
+        guard let url = pickDirectory() else { return }
+        let name = url.lastPathComponent.isEmpty ? "Custom" : url.lastPathComponent
+        store.addSource(DataSource(id: UUID().uuidString,
+                                   providerType: GenericClaudeFormatProvider.typeId,
+                                   name: name, path: url.path, enabled: true))
+    }
+
+    private func pickDirectory() -> URL? {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Use This Folder"
+        panel.message = "Pick a folder containing Claude-Code-format .jsonl logs"
+        NSApp.activate(ignoringOtherApps: true)
+        return panel.runModal() == .OK ? panel.url : nil
     }
 }

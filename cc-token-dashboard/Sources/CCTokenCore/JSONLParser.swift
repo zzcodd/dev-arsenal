@@ -29,14 +29,16 @@ public enum JSONLParser {
         isoFractional.date(from: s) ?? isoPlain.date(from: s)
     }
 
-    /// Incrementally parse a JSONL file starting at `offset`.
+    /// Incrementally read a JSONL file from `offset`, parsing each complete line with the
+    /// supplied per-line parser. This is the generic, provider-agnostic byte reader: only
+    /// the line→record mapping differs between tools, so providers pass their own `lineParser`.
     ///
-    /// Only fully-terminated lines (ending in `\n`) are consumed; a trailing partial
-    /// line is left for the next call. If the file shrank below `offset` (rotation /
-    /// truncation) we restart from 0.
-    ///
-    /// - Parameter fallbackProject: project name to use when a line has no `cwd`.
-    public static func parse(at url: URL, fallbackProject: String, fromOffset offset: UInt64) -> ParseResult {
+    /// Only fully-terminated lines (ending in `\n`) are consumed; a trailing partial line is
+    /// left for the next call. If the file shrank below `offset` (rotation/truncation) we
+    /// restart from 0.
+    public static func read(at url: URL,
+                            fromOffset offset: UInt64,
+                            lineParser: (Data) -> UsageRecord?) -> ParseResult {
         guard let handle = try? FileHandle(forReadingFrom: url) else {
             return ParseResult(records: [], newOffset: offset)
         }
@@ -60,15 +62,21 @@ public enum JSONLParser {
 
         var records: [UsageRecord] = []
         for line in complete.split(separator: newline, omittingEmptySubsequences: true) {
-            if let rec = parseLine(Data(line), fallbackProject: fallbackProject) {
+            if let rec = lineParser(Data(line)) {
                 records.append(rec)
             }
         }
         return ParseResult(records: records, newOffset: newOffset)
     }
 
-    /// Parse one JSONL line into a UsageRecord, or nil if it isn't a billable assistant turn.
-    static func parseLine(_ data: Data, fallbackProject: String) -> UsageRecord? {
+    /// Convenience for the Claude Code format (used by the CLI and ClaudeCodeProvider).
+    public static func parse(at url: URL, fallbackProject: String, fromOffset offset: UInt64) -> ParseResult {
+        read(at: url, fromOffset: offset) { parseLine($0, fallbackProject: fallbackProject) }
+    }
+
+    /// Parse one Claude Code JSONL line into a UsageRecord, or nil if it isn't a billable
+    /// assistant turn.
+    public static func parseLine(_ data: Data, fallbackProject: String) -> UsageRecord? {
         guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               (obj["type"] as? String) == "assistant",
               let message = obj["message"] as? [String: Any],

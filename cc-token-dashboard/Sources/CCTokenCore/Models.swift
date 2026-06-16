@@ -4,6 +4,9 @@ import Foundation
 public struct UsageRecord: Sendable, Equatable {
     public let timestamp: Date
     public let project: String          // display name (cwd's last path component)
+    /// Which tool/data source produced this (e.g. "Claude Code", "Codex"). The store
+    /// stamps it per configured data source; the parser leaves the default.
+    public var source: String
     public let model: String            // e.g. "claude-opus-4-8"
     public let input: Int
     public let cacheCreation: Int       // writing cache (~1.25x input price)
@@ -14,9 +17,10 @@ public struct UsageRecord: Sendable, Equatable {
 
     public init(timestamp: Date, project: String, model: String,
                 input: Int, cacheCreation: Int, cacheRead: Int, output: Int,
-                dedupeKey: String?) {
+                source: String = "Claude Code", dedupeKey: String?) {
         self.timestamp = timestamp
         self.project = project
+        self.source = source
         self.model = model
         self.input = input
         self.cacheCreation = cacheCreation
@@ -62,6 +66,7 @@ public struct AggregatedUsage: Sendable, Equatable {
     public var estimatedCostUSD: Double = 0
     public var byProject: [NamedTotal] = []   // sorted desc
     public var byModel: [NamedTotal] = []      // sorted desc
+    public var bySource: [NamedTotal] = []     // sorted desc (per tool/data source)
     public var dailyTotals: [DailyTotal] = []  // last 7 days, oldest first
     public var last5hTokens: Int = 0           // rolling 5-hour window (informational)
 

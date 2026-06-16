@@ -40,6 +40,21 @@ public enum TranscriptScanner {
         return out
     }
 
+    /// Recursively find every `*.jsonl` under `root`, with the containing directory's name
+    /// as the fallback project. Used by providers whose log layout isn't the fixed
+    /// ~/.claude/projects shape (e.g. a user-pointed directory).
+    public static func jsonlFilesRecursive(under root: URL) -> [(url: URL, fallbackProject: String)] {
+        let fm = FileManager.default
+        guard let enumerator = fm.enumerator(at: root, includingPropertiesForKeys: nil,
+                                             options: [.skipsHiddenFiles]) else { return [] }
+        var out: [(URL, String)] = []
+        for case let url as URL in enumerator where url.pathExtension == "jsonl" {
+            let parent = url.deletingLastPathComponent().lastPathComponent
+            out.append((url, cleanProjectName(parent)))
+        }
+        return out
+    }
+
     /// "-Users-zhangyu-project-ccDir-cc-token-dashboard" → "cc-token-dashboard".
     /// Hyphens in the original folder name are ambiguous, so this is best-effort;
     /// per-record `cwd` is the accurate source and overrides this.

@@ -32,28 +32,80 @@ final class UsageStore: ObservableObject {
     @Published private(set) var menuBarText = "…"
     @Published private(set) var lastUpdated = Date(timeIntervalSince1970: 0)
     @Published private(set) var isScanning = false
+    /// Configured data sources (Claude Code + any custom folders). Persisted as JSON.
+    @Published private(set) var dataSources: [DataSource] = []
 
     var range: TimeRange { TimeRange(rawValue: rangeRaw) ?? .today }
     var metric: MenuBarMetric { MenuBarMetric(rawValue: metricRaw) ?? .todayTokens }
 
+    private let sourcesKey = "dataSources"
     private var fileRecords: [URL: [UsageRecord]] = [:]
     private var offsets: [URL: UInt64] = [:]
     private var currentSessionFile: URL?
-    private var watcher: FSEventsWatcher?
+    private var watchers: [FSEventsWatcher] = []
     private var notifiedToday = false
     private var refreshScheduled = false
 
     init() {
+        loadDataSources()
         start()
     }
 
     private func start() {
         Task { await fullScan() }
-        let watcher = FSEventsWatcher(path: TranscriptScanner.rootURL.path) { [weak self] in
-            Task { @MainActor in self?.scheduleRefresh() }
+        rebuildWatchers()
+    }
+
+    // MARK: - Data sources
+
+    private func loadDataSources() {
+        if let data = UserDefaults.standard.data(forKey: sourcesKey),
+           let decoded = try? JSONDecoder().decode([DataSource].self, from: data),
+           !decoded.isEmpty {
+            dataSources = decoded
+        } else {
+            dataSources = DataSource.defaults
         }
-        watcher.start()
-        self.watcher = watcher
+    }
+
+    private func saveDataSources() {
+        if let data = try? JSONEncoder().encode(dataSources) {
+            UserDefaults.standard.set(data, forKey: sourcesKey)
+        }
+    }
+
+    /// Replace the source list (from Settings), persist it, and re-scan from scratch.
+    func setDataSources(_ new: [DataSource]) {
+        dataSources = new
+        saveDataSources()
+        fileRecords.removeAll()
+        offsets.removeAll()
+        currentSessionFile = nil
+        rebuildWatchers()
+        Task { await fullScan() }
+    }
+
+    func addSource(_ ds: DataSource) { setDataSources(dataSources + [ds]) }
+    func removeSource(id: String) { setDataSources(dataSources.filter { $0.id != id }) }
+    func updateSource(_ ds: DataSource) { setDataSources(dataSources.map { $0.id == ds.id ? ds : $0 }) }
+
+    /// Enabled sources resolved to (provider, source name, root). Skips unresolvable ones.
+    private func resolvedSources() -> [(provider: UsageProvider, source: String, root: URL)] {
+        dataSources.compactMap { ds in
+            guard ds.enabled, let r = ds.resolved() else { return nil }
+            return (r.provider, ds.name, r.root)
+        }
+    }
+
+    private func rebuildWatchers() {
+        watchers.forEach { $0.stop() }
+        watchers = resolvedSources().map { s in
+            let w = FSEventsWatcher(path: s.root.path) { [weak self] in
+                Task { @MainActor in self?.scheduleRefresh() }
+            }
+            w.start()
+            return w
+        }
     }
 
     /// Coalesce rapid FSEvents into at most one refresh per ~300ms.
@@ -69,25 +121,33 @@ final class UsageStore: ObservableObject {
 
     private func fullScan() async {
         isScanning = true
-        let transcripts = TranscriptScanner.allTranscripts()
-        await parse(transcripts)
+        await parse()
         isScanning = false
     }
 
     private func refresh() async {
-        await parse(TranscriptScanner.allTranscripts())
+        await parse()
     }
 
-    /// Incrementally parse each file from its stored offset (off the main thread).
-    private func parse(_ transcripts: [(url: URL, fallbackProject: String)]) async {
+    /// Incrementally parse every enabled source's files from their stored offsets
+    /// (off the main thread), stamping each record with its source name.
+    private func parse() async {
+        let sources = resolvedSources()
         let snapshot = offsets
         let parsed: [(URL, [UsageRecord], UInt64)] = await Task.detached(priority: .utility) {
             var results: [(URL, [UsageRecord], UInt64)] = []
-            for t in transcripts {
-                let start = snapshot[t.url] ?? 0
-                let r = JSONLParser.parse(at: t.url, fallbackProject: t.fallbackProject, fromOffset: start)
-                if !r.records.isEmpty || snapshot[t.url] == nil {
-                    results.append((t.url, r.records, r.newOffset))
+            for s in sources {
+                for f in s.provider.transcripts(root: s.root) {
+                    let start = snapshot[f.url] ?? 0
+                    let r = JSONLParser.read(at: f.url, fromOffset: start) { line in
+                        guard var rec = s.provider.parseLine(line, fallbackProject: f.fallbackProject)
+                        else { return nil }
+                        rec.source = s.source
+                        return rec
+                    }
+                    if !r.records.isEmpty || snapshot[f.url] == nil {
+                        results.append((f.url, r.records, r.newOffset))
+                    }
                 }
             }
             return results

@@ -65,6 +65,16 @@ open build/CCTokenDashboard.app
 The app has no Dock icon — look for the gauge glyph + number in the **menu bar**.
 Quit via the power button in the popover's footer.
 
+## Multiple tools / data sources
+
+The app is **multi-source**. Out of the box it reads Claude Code; in Settings → *Data
+sources* you can add any folder of Claude-Code-format `.jsonl` logs (e.g. an internal
+wrapper that delegates to Claude Code). Usage is then broken down per source.
+
+To support a tool with its own log format (Codex, Gemini CLI, …), write a small provider —
+see **[docs/ADDING-A-PROVIDER.md](docs/ADDING-A-PROVIDER.md)**, a repeatable method for
+discovering and normalizing any tool's local usage. Everything stays local; no network.
+
 ## How it works
 
 ```

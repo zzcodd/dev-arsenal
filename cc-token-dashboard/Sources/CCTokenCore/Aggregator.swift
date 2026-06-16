@@ -29,6 +29,7 @@ public enum Aggregator {
         var agg = AggregatedUsage()
         var projectTotals: [String: Int] = [:]
         var modelTotals: [String: Int] = [:]
+        var sourceTotals: [String: Int] = [:]
         var dayTotals: [Date: Int] = [:]
 
         for r in records {
@@ -50,6 +51,7 @@ public enum Aggregator {
 
             projectTotals[r.project, default: 0] += r.total
             modelTotals[shortModelName(r.model), default: 0] += r.total
+            sourceTotals[r.source, default: 0] += r.total
             let day = calendar.startOfDay(for: r.timestamp)
             dayTotals[day, default: 0] += r.total
         }
@@ -59,6 +61,10 @@ public enum Aggregator {
             .map { NamedTotal(name: $0.key, tokens: $0.value) }
             .sorted { $0.tokens > $1.tokens }
         agg.byModel = modelTotals
+            .filter { $0.value > 0 }
+            .map { NamedTotal(name: $0.key, tokens: $0.value) }
+            .sorted { $0.tokens > $1.tokens }
+        agg.bySource = sourceTotals
             .filter { $0.value > 0 }
             .map { NamedTotal(name: $0.key, tokens: $0.value) }
             .sorted { $0.tokens > $1.tokens }

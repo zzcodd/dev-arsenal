@@ -4,10 +4,10 @@ import Foundation
 
 private func record(_ ts: Date, project: String = "p", model: String = "claude-opus-4-8",
                     input: Int = 0, cacheCreation: Int = 0, cacheRead: Int = 0, output: Int = 0,
-                    key: String? = nil) -> UsageRecord {
+                    source: String = "Claude Code", key: String? = nil) -> UsageRecord {
     UsageRecord(timestamp: ts, project: project, model: model,
                 input: input, cacheCreation: cacheCreation, cacheRead: cacheRead, output: output,
-                dedupeKey: key)
+                source: source, dedupeKey: key)
 }
 
 @Test func parseLineExtractsUsage() {
@@ -69,4 +69,36 @@ private func record(_ ts: Date, project: String = "p", model: String = "claude-o
 
 @Test func trendHasSevenDays() {
     #expect(Aggregator.aggregate([record(Date(), output: 1)], range: .all).dailyTotals.count == 7)
+}
+
+@Test func aggregateBreaksDownBySource() {
+    let now = Date()
+    let recs = [record(now, output: 100, source: "Claude Code"),
+                record(now, output: 40, source: "Codex"),
+                record(now, output: 60, source: "Claude Code")]
+    let agg = Aggregator.aggregate(recs, range: .all)
+    #expect(agg.bySource.count == 2)
+    #expect(agg.bySource.first?.name == "Claude Code")   // sorted desc: 160 > 40
+    #expect(agg.bySource.first?.tokens == 160)
+}
+
+@Test func defaultDataSourceResolvesToClaudeCode() {
+    let sources = DataSource.defaults
+    #expect(sources.count == 1)
+    let resolved = sources[0].resolved()
+    #expect(resolved != nil)
+    #expect(resolved?.provider.displayName == "Claude Code")
+    // Empty path => falls back to the provider default root (…/.claude/projects).
+    #expect(resolved?.root.lastPathComponent == "projects")
+}
+
+@Test func customFolderSourceNeedsAPath() {
+    // A generic-folder source with no path can't resolve (no default location).
+    let s = DataSource(id: "x", providerType: GenericClaudeFormatProvider.typeId,
+                       name: "Eden", path: "", enabled: true)
+    #expect(s.resolved() == nil)
+    // With a path it resolves.
+    let s2 = DataSource(id: "x", providerType: GenericClaudeFormatProvider.typeId,
+                        name: "Eden", path: "/tmp/eden-logs", enabled: true)
+    #expect(s2.resolved() != nil)
 }
